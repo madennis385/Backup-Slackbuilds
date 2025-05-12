@@ -56,7 +56,7 @@ MONITOR_DIR = "/tmp"  # Directory to monitor
 DEST_BASE_DIR = Path.home() # <<< Change this if you (like me) format EVERYTHING when you reinstall
 DEST_DIR = "SavedSlackBuilds"  # <<< CHANGE THIS!!! I use a subdirectory in my home directory that's actually an NFS share, so when my hard drive get formatted, my slackbuilds stay safe.
 FILE_EXTENSIONS = list[".tgz", ".tbz", ".tlz", ".txz"]  # File extensions to monitor (probably doesn't need to change)
-POLL_INTERVAL = 5  # Seconds between directory scans
+POLL_INTERVAL = 5  # Minutes between directory scans
 STABILITY_THRESHOLD = 120  # Seconds a file size must remain unchanged to be considered stable (2 minutes)
 LOG_FILE = "file_monitor.log"  # Path to the log file
 # --- End Configuration ---

@@ -53,7 +53,8 @@ Edit the `oopRefactor/file_monitor.py` script and modify the configuration const
 ```python
 # --- Configuration ---
 MONITOR_DIR = "/tmp"  # Directory to monitor
-DEST_DIR = "processed_tgz"  # <<< CHANGE THIS!!! Where to copy stable files
+DEST_BASE_DIR = Path.home() # <<< Change this if you (like me) format EVERYTHING when you reinstall
+DEST_DIR = "SavedSlackBuilds"  # <<< CHANGE THIS!!! I use a subdirectory in my home directory that's actually an NFS share, so when my hard drive get formatted, my slackbuilds stay safe.
 FILE_EXTENSIONS = list[".tgz", ".tbz", ".tlz", ".txz"]  # File extensions to monitor (probably doesn't need to change)
 POLL_INTERVAL = 5  # Seconds between directory scans
 STABILITY_THRESHOLD = 120  # Seconds a file size must remain unchanged to be considered stable (2 minutes)
@@ -62,8 +63,6 @@ LOG_FILE = "file_monitor.log"  # Path to the log file
 ```
 
 ## Future Plans
-
-While the current script fulfills its core purpose, there are several potential areas for enhancement and future development:
 
 * **External Configuration:** Move configuration variables (`MONITOR_DIR`, `DEST_DIR`, `POLL_INTERVAL`, etc.) out of the script into a separate configuration file (e.g., `config.ini`, `config.yaml`) or allow them to be set via command-line arguments.
 * **GUI Interface:** Develop a simple graphical user interface (GUI) 

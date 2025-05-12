@@ -1,0 +1,1 @@
+validExtensions = [".tgz", ".tbz", ".tlz", ".txz"]

@@ -1,36 +1,21 @@
-import os
+# file_monitor.py
 import time
 import shutil
 import logging
 from pathlib import Path
 
-# --- Configuration ---
-MONITOR_DIR = "/tmp"
-DEST_SUBDIR_NAME = "processed_tgz"
-FILE_EXTENSION = ".tgz"
-CHECK_INTERVAL_SECONDS = 300
-STABLE_CHECKS_THRESHOLD = 2
-# --- End Configuration ---
-
-# --- Setup Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-# --- End Setup Logging ---
-
-class FileMonitor:
-    def __init__(self, monitor_dir, file_extension, dest_subdir_name, check_interval, stable_threshold):
+class SlackBuildMonitor:
+    def __init__(self, monitor_dir, file_extensions, dest_base_dir, dest_subdir_name, check_interval, stable_threshold):
         self.monitor_dir = Path(monitor_dir)
-        self.file_extension = file_extension
+        self.dest_base_dir = Path(dest_base_dir) # Ensure dest_base_dir is a Path object
+        self.file_extensions = file_extensions
         self.dest_dir = self.ensure_dest_dir(dest_subdir_name)
         self.check_interval = check_interval
         self.stable_threshold = stable_threshold
         self.monitored_files = {}
 
     def ensure_dest_dir(self, subdir_name):
-        dest_path = self.monitor_dir / subdir_name
+        dest_path = self.dest_base_dir / subdir_name
         try:
             dest_path.mkdir(parents=True, exist_ok=True)
             logging.info(f"Ensured destination directory exists: {dest_path}")
@@ -52,7 +37,7 @@ class FileMonitor:
         try:
             return {
                 f for f in self.monitor_dir.iterdir()
-                if f.is_file() and f.suffix == self.file_extension
+                if f.is_file() and f.suffix in self.file_extensions
             }
         except OSError as e:
             logging.error(f"Error listing directory {self.monitor_dir}: {e}")
@@ -105,8 +90,8 @@ class FileMonitor:
         if not self.dest_dir:
             logging.error("Destination directory is not set. Exiting.")
             return
-
-        logging.info(f"Monitoring directory: {self.monitor_dir} for *{self.file_extension} files.")
+        extensions_display_string = ", ".join([f"{ext}" for ext in self.file_extensions]) 
+        logging.info(f"Monitoring directory: {self.monitor_dir} for {extensions_display_string} files.")
         try:
             while True:
                 logging.debug("Scanning directory...")
@@ -120,21 +105,4 @@ class FileMonitor:
         except Exception as e:
             logging.error(f"Unexpected error: {e}", exc_info=True)
         finally:
-            logging.info("FileMonitor shutting down.")
-
-
-def main():
-    try:
-        monitor = FileMonitor(
-            monitor_dir=MONITOR_DIR,
-            file_extension=FILE_EXTENSION,
-            dest_subdir_name=DEST_SUBDIR_NAME,
-            check_interval=CHECK_INTERVAL_SECONDS,
-            stable_threshold=STABLE_CHECKS_THRESHOLD
-        )
-        monitor.run()
-    except Exception as e:
-        logging.error(f"Failed to initialize FileMonitor: {e}")
-
-if __name__ == "__main__":
-    main()
+            logging.info("SlackBuildMonitor shutting down.")

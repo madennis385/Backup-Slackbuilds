@@ -48,7 +48,7 @@ I reinstall my OS pretty frequently, sometimes multiple times in a week. Some st
 
 **IMPORTANT:** Before running the script, you **MUST** configure the destination directory.
 
-Edit the `oopRefactor/file_monitor.py` script and modify the configuration constants near the top of the file:
+Edit the `config.py` script and modify the configuration constants:
 
 ```python
 # --- Configuration ---
@@ -64,11 +64,11 @@ LOG_FILE = "file_monitor.log"  # Path to the log file
 
 ## Future Plans
 
-* **External Configuration:** Move configuration variables (`MONITOR_DIR`, `DEST_DIR`, `POLL_INTERVAL`, etc.) out of the script into a separate configuration file (e.g., `config.ini`, `config.yaml`) or allow them to be set via command-line arguments.
+* **External Configuration:** Make configuration mutable, use either the config.py file or allow them to be set via command-line arguments.
 * **GUI Interface:** Develop a simple graphical user interface (GUI) 
 * **Cleanup Utility:** Implement an optional feature (possibly as a separate utility or an argument) to clean up SlackBuild-specific files or directories from the `MONITOR_DIR` *after* they have been successfully copied and verified in the `DEST_DIR` and in installed slackbuilds.
 * **Filesystem Event Monitoring:** Explore using more efficient filesystem event monitoring libraries (like `watchdog` on Linux/macOS/Windows or `inotify` directly on Linux) instead of polling.
-* **System Service** Provide a wrapper script (using our favorite .rc files!)
+* **System Service** Provide a wrapper script to run this from rc.local
 * **Improved Logging:** Enhance logging with more detail, configurable log levels, and potentially log rotation.
-* **Packaging:** Package the script for easier distribution and installation (e.g., using `setuptools` or `poetry` for installation via `pip`).
+* **Packaging:** Package the script for easier distribution and installation (as a slackbuild?)
 * **Duplicate Handling:** Add logic to check if an identical file (based on name or hash) already exists in the destination before copying, potentially skipping the copy or adding a version suffix.

@@ -59,7 +59,7 @@ POLL_INTERVAL = 5  # Seconds between directory scans
 STABILITY_THRESHOLD = 120  # Seconds a file size must remain unchanged to be considered stable (2 minutes)
 LOG_FILE = "file_monitor.log"  # Path to the log file
 # --- End Configuration ---
-
+```
 
 ## Future Plans
 

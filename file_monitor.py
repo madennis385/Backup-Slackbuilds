@@ -4,7 +4,7 @@ import shutil
 import logging
 from pathlib import Path
 
-class SlackBuildMonitor:
+class CachedFileMonitor:
     def __init__(self, monitor_dir, file_extensions, dest_base_dir, dest_subdir_name, check_interval, stable_threshold):
         self.monitor_dir = Path(monitor_dir)
         self.dest_base_dir = Path(dest_base_dir) # Ensure dest_base_dir is a Path object
@@ -105,4 +105,4 @@ class SlackBuildMonitor:
         except Exception as e:
             logging.error(f"Unexpected error: {e}", exc_info=True)
         finally:
-            logging.info("SlackBuildMonitor shutting down.")
+            logging.info("CachedFileMonitor shutting down.")

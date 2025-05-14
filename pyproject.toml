@@ -16,11 +16,9 @@ authors = [
 ]
 
 keywords = ["backup", "file monitor", "automation", "python", "local backup"]
-# List your project's dependencies here
 dependencies = [
   "questionary>=2.0.0,<3.0.0"
 ]
-# Optional: Project URLs
 [project.urls]
 Homepage = "https://github.com/madennis385/Backup-Slackbuilds"
 Repository = "https://github.com/madennis385/Backup-Slackbuilds"

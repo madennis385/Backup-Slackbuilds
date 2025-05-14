@@ -2,6 +2,10 @@
 
 This Python script monitors a specified directory for files with particular extensions. When these files become "stable" (i.e., their size hasn't changed for a configurable period), the script backs them up to a designated destination directory. It intelligently avoids duplicating backups of unchanged files by checking MD5 hashes against a local SQLite database of previously backed-up files.
 
+# What motivated me to do this?
+
+I reinstall Slackware  pretty freqently, and having to re-build some of the things I _always_ install on my desktop, laptop or whatever is a pain, especially for older hardware. (IE: my aging Lenovo laptop takes approximately 2 hours to build nodejs). I often forget to grab whatever slackbuilds are in `/tmp` so that I can just reinstall them later. This file (and an NFS share it backs up to) makes sure I don't have to recompile every slackbuild I've run since the last time I did the reinstall thing.
+
 ## Features
 
 * **Directory Monitoring:** Actively watches a user-defined directory.

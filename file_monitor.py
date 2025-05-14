@@ -3,18 +3,43 @@ import time
 import shutil
 import logging
 from pathlib import Path
+from config import Config # Config is already imported but good to note
+import hashlib
+from backup_db import BackupDB
 
 class CachedFileMonitor:
-    def __init__(self, monitor_dir, file_extensions, dest_base_dir, dest_subdir_name, check_interval, stable_threshold):
-        self.monitor_dir = Path(monitor_dir)
-        self.dest_base_dir = Path(dest_base_dir) # Ensure dest_base_dir is a Path object
-        self.file_extensions = file_extensions
-        self.dest_dir = self.ensure_dest_dir(dest_subdir_name)
-        self.check_interval = check_interval
-        self.stable_threshold = stable_threshold
+    # Change __init__ to accept a single Config object
+    def __init__(self, config: Config):
+        self.config = config  # Store the passed Config object
+
+        # Initialize attributes from the config object
+        # Ensure Path objects for directory attributes
+        self.monitor_dir = Path(self.config.monitor_dir)
+        self.dest_base_dir = Path(self.config.dest_base_dir) # Corrected typo from self.dest_base_dire
+        # self.dest_subdir_name = self.config.dest_subdir_name # This can be accessed via self.config.dest_subdir_name
+        self.file_extensions = self.config.file_extensions
+        self.check_interval = self.config.check_interval
+        self.stable_threshold = self.config.stable_threshold
+
+        # ensure_dest_dir will use attributes from self.config or the initialized self.dest_base_dir
+        self.dest_dir = self.ensure_dest_dir(self.config.dest_subdir_name)
         self.monitored_files = {}
+        self.db = BackupDB()
+
+    def compute_md5(self, filepath: Path, chunk_size: int = 8192) -> str:
+        """Compute MD5 hash of the given file."""
+        hash_md5 = hashlib.md5()
+        try:
+            with filepath.open("rb") as f:
+                for chunk in iter(lambda: f.read(chunk_size), b""):
+                    hash_md5.update(chunk)
+            return hash_md5.hexdigest()
+        except Exception as e:
+            logging.error(f"Failed to compute MD5 for {filepath}: {e}")
+            return ""
 
     def ensure_dest_dir(self, subdir_name):
+        # Use self.dest_base_dir which is initialized as a Path object from the config
         dest_path = self.dest_base_dir / subdir_name
         try:
             dest_path.mkdir(parents=True, exist_ok=True)
@@ -35,6 +60,7 @@ class CachedFileMonitor:
 
     def scan_files(self):
         try:
+            # self.monitor_dir is already a Path object
             return {
                 f for f in self.monitor_dir.iterdir()
                 if f.is_file() and f.suffix in self.file_extensions
@@ -60,7 +86,8 @@ class CachedFileMonitor:
             if current_size == file_info['last_size']:
                 file_info['stable_checks'] += 1
                 logging.debug(f"{filepath} size stable at {current_size}. Checks: {file_info['stable_checks']}")
-                if file_info['stable_checks'] >= self.stable_threshold:
+                # Use self.stable_threshold and self.check_interval directly
+                if file_info['stable_checks'] * self.check_interval >= self.stable_threshold:
                     self.copy_stable_file(filepath)
             else:
                 logging.info(f"{filepath} size changed from {file_info['last_size']} to {current_size}. Resetting checks.")
@@ -78,19 +105,30 @@ class CachedFileMonitor:
 
     def copy_stable_file(self, filepath):
         try:
-            dest_path = self.dest_dir / filepath.name
+            file_md5 = self.compute_md5(filepath)
+            # self.monitor_dir is a Path object
+            rel_path = str(filepath.relative_to(self.monitor_dir))
+            dest_path = self.dest_dir / filepath.name # self.dest_dir is already Path
+
+            if self.db.is_already_backed_up(rel_path, file_md5):
+                logging.info(f"Skipped {filepath}; already backed up with same content.")
+                return
+
             shutil.copy2(filepath, dest_path)
+            self.db.record_backup(rel_path, file_md5)
             logging.info(f"Copied {filepath} to {dest_path}")
-        except (shutil.Error, OSError) as e:
+
+        except Exception as e:
             logging.error(f"Error copying {filepath}: {e}")
         finally:
             self.monitored_files.pop(filepath, None)
 
     def run(self):
-        if not self.dest_dir:
+        if not self.dest_dir: # self.dest_dir is initialized in __init__
             logging.error("Destination directory is not set. Exiting.")
             return
-        extensions_display_string = ", ".join([f"{ext}" for ext in self.file_extensions]) 
+        extensions_display_string = ", ".join(self.file_extensions)
+        # self.monitor_dir is a Path object
         logging.info(f"Monitoring directory: {self.monitor_dir} for {extensions_display_string} files.")
         try:
             while True:
@@ -98,6 +136,7 @@ class CachedFileMonitor:
                 current_files = self.scan_files()
                 self.handle_existing_files(current_files)
                 self.handle_new_files(current_files)
+                # self.check_interval is an int
                 logging.debug(f"Sleeping for {self.check_interval} seconds...")
                 time.sleep(self.check_interval)
         except KeyboardInterrupt:
@@ -105,4 +144,5 @@ class CachedFileMonitor:
         except Exception as e:
             logging.error(f"Unexpected error: {e}", exc_info=True)
         finally:
-            logging.info("CachedFileMonitor shutting down.")
+                logging.info("CachedFileMonitor shutting down.")
+                self.db.save_to_disk()

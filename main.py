@@ -1,8 +1,11 @@
 # main.py
 import os
+import sys
 import logging
-from config import get_config
+from pathlib import Path # Add Path import if not already implicitly available for Config instantiation
+from config import get_config, Config # Import Config dataclass
 from file_monitor import CachedFileMonitor
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -12,17 +15,25 @@ logging.basicConfig(
 
 def main():
     try:
-        monitor = CachedFileMonitor(
-            monitor_dir = get_config[0], #MONITOR_DIR
-            file_extensions = get_config[3], #FILE_EXTENSIONS
-            dest_base_dir = get_config[1], #DEST_BASE_DIR
-            dest_subdir_name=get_config[2], #DEST_SUBDIR_NAME
-            check_interval=get_config[4], #CHECK_INTERVAL_SECONDS
-            stable_threshold=get_config[5], #STABLE_CHECKS_THRESHOLD
+        use_defaults = "--no-input" in sys.argv or "--auto" in sys.argv
+        # config_tuple will hold the raw values from get_config
+        config_tuple = get_config(auto=use_defaults)
+
+        # Create a Config object
+        app_config = Config(
+            monitor_dir=Path(config_tuple[0]),
+            dest_base_dir=Path(config_tuple[1]),
+            dest_subdir_name=config_tuple[2],
+            file_extensions=config_tuple[3],
+            check_interval=config_tuple[4],
+            stable_threshold=config_tuple[5]
         )
+
+        # Pass the single Config object
+        monitor = CachedFileMonitor(app_config)
         monitor.run()
     except Exception as e:
-        logging.error(f"Failed to initialize CachedFileMonitor: {e}")
+        logging.error(f"Failed to initialize or run CachedFileMonitor: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

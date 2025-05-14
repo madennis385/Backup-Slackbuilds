@@ -1,0 +1,181 @@
+#!/bin/sh
+#
+# /etc/rc.d/rc.cached_file_monitor
+#
+# Init script for Cached File Monitor
+
+# --- Application Configuration ---
+APP_NAME="cached_file_monitor"
+APP_USER="nobody"                                 # User to run the application as
+APP_GROUP="nogroup"                               # Group for the application user (common for 'nobody', verify for your system, e.g., 'nobody' or 'nogroup')
+PYTHON_BIN="/usr/bin/python3"                     # Path to Python interpreter
+SCRIPT_PATH="/opt/cached_file_monitor/main.py"    # Path to your application's main script
+
+# --- File and Directory Paths ---
+APP_RUN_DIR="/var/run/${APP_NAME}"                # Directory for runtime files (e.g., PID file)
+PID_FILE="${APP_RUN_DIR}/${APP_NAME}.pid"         # Path to the PID file
+LOG_FILE="/var/log/${APP_NAME}.log"               # Path to the log file
+
+# --- Environment Setup ---
+# This section runs every time the script is called, before processing the command.
+# It ensures that necessary directories and files exist with correct permissions.
+echo "Initializing ${APP_NAME} environment..."
+
+# Create and set permissions for the application's run directory
+if [ ! -d "$APP_RUN_DIR" ]; then
+    echo "Creating run directory: $APP_RUN_DIR"
+    mkdir -p "$APP_RUN_DIR"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to create run directory $APP_RUN_DIR. Exiting."
+        exit 1
+    fi
+fi
+
+# Set ownership and permissions for the run directory
+# This is done even if the directory already exists to ensure they are correct.
+chown "$APP_USER:$APP_GROUP" "$APP_RUN_DIR"
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set ownership on $APP_RUN_DIR for user $APP_USER and group $APP_GROUP. Exiting."
+    exit 1
+fi
+chmod 750 "$APP_RUN_DIR" # Permissions: rwxr-x--- (User: rwx, Group: rx, Other: ---)
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set permissions (750) on $APP_RUN_DIR. Exiting."
+    exit 1
+fi
+
+# Create and set permissions for the log file
+if [ ! -f "$LOG_FILE" ]; then
+    echo "Creating log file: $LOG_FILE"
+    touch "$LOG_FILE"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to create log file $LOG_FILE. Exiting."
+        exit 1
+    fi
+fi
+
+# Set ownership and permissions for the log file
+# This is done even if the file already exists to ensure they are correct.
+chown "$APP_USER:$APP_GROUP" "$LOG_FILE"
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set ownership on $LOG_FILE for user $APP_USER and group $APP_GROUP. Exiting."
+    exit 1
+fi
+chmod 640 "$LOG_FILE" # Permissions: rw-r----- (User: rw, Group: r, Other: ---)
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set permissions (640) on $LOG_FILE. Exiting."
+    exit 1
+fi
+
+echo "Environment initialization complete for ${APP_NAME}."
+
+# --- Service Control Functions ---
+start() {
+    echo "Starting ${APP_NAME}..."
+
+    # Check if the PID file exists and the process is actually running
+    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
+        echo "${APP_NAME} is already running with PID $(cat "$PID_FILE")."
+        return 1
+    elif [ -f "$PID_FILE" ]; then
+        echo "Stale PID file found: $PID_FILE. Removing it."
+        rm -f "$PID_FILE"
+    fi
+
+    # Start the application in the background as APP_USER
+    # Ensure APP_USER has write permissions to APP_RUN_DIR (for PID_FILE) and LOG_FILE
+    echo "Launching ${APP_NAME} as user ${APP_USER}..."
+    su -s /bin/sh -c "nohup $PYTHON_BIN $SCRIPT_PATH --no-input >> \"$LOG_FILE\" 2>&1 & echo \$! > \"$PID_FILE\"" "$APP_USER"
+    
+    # Brief pause to allow PID file creation
+    sleep 1 
+
+    if [ -f "$PID_FILE" ]; then
+        echo "${APP_NAME} started with PID $(cat "$PID_FILE")."
+    else
+        echo "ERROR: ${APP_NAME} started but PID file was not created. Check logs and permissions."
+        echo "Log file: $LOG_FILE"
+        echo "Run directory: $APP_RUN_DIR (should be writable by $APP_USER)"
+        return 1
+    fi
+}
+
+stop() {
+    echo "Stopping ${APP_NAME}..."
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Sending TERM signal to PID $PID..."
+            kill "$PID"
+            # Wait for the process to terminate
+            count=0
+            while kill -0 "$PID" 2>/dev/null; do
+                if [ "$count" -gt 10 ]; then # Wait for up to 10 seconds
+                    echo "Process $PID did not terminate gracefully. Force killing..."
+                    kill -9 "$PID"
+                    break
+                fi
+                sleep 1
+                count=$((count + 1))
+            done
+            
+            if ! kill -0 "$PID" 2>/dev/null; then
+                 echo "${APP_NAME} stopped."
+            else
+                 echo "Failed to stop ${APP_NAME} (PID $PID) even with SIGKILL."
+            fi
+        else
+            echo "Process with PID $PID (from PID file) not running. Cleaning up stale PID file."
+        fi
+        rm -f "$PID_FILE"
+    else
+        echo "No PID file found. Is ${APP_NAME} running?"
+    fi
+}
+
+restart() {
+    echo "Restarting ${APP_NAME}..."
+    stop
+    sleep 1 # Give a moment for resources to free up
+    start
+}
+
+status() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "${APP_NAME} is running with PID $PID."
+            return 0 # Service is running
+        else
+            echo "${APP_NAME} PID file found ($PID_FILE), but process with PID $PID is not running. Stale PID file?"
+            return 1 # Service not running, but PID file exists
+        fi
+    else
+        echo "${APP_NAME} is not running (no PID file found)."
+        return 3 # Service not running
+    fi
+}
+
+# --- Main Script Logic ---
+# Process the command line argument
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?
+

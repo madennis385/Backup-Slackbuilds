@@ -5,15 +5,35 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-DB_DISK_PATH = Path("backup_state.sqlite")
+# Determine the directory where this script (backup_db.py) is located.
+APP_SCRIPT_DIR = Path(__file__).resolve().parent
+# Define a 'data' subdirectory within the application's installation directory.
+DATA_DIR = APP_SCRIPT_DIR / "data"
+DB_DISK_PATH = DATA_DIR / "backup_state.sqlite"
 
 class BackupDB:
     def __init__(self):
-        self.conn = sqlite3.connect(":memory:")
+        # Ensure the data directory exists.
+        # The setup script should primarily handle creation and permissions.
+        # This is a fallback or for direct script execution.
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            # Log an error if directory creation fails here, but don't raise
+            # as the main script might run into permission issues if not set up.
+            logging.error(f"Could not ensure data directory {DATA_DIR} from BackupDB: {e}")
+
+
+        self.conn = sqlite3.connect(":memory:") # Start with an in-memory DB
         self.init_schema()
         self._loaded = False
         if DB_DISK_PATH.exists():
+            # Only attempt to load if the service user can access/read this path.
+            # Permissions are handled by the setup script.
             self.load_from_disk()
+        else:
+            logging.info(f"Backup database {DB_DISK_PATH} not found. Will be created on first save.")
+
 
     def init_schema(self):
         self.conn.execute("""

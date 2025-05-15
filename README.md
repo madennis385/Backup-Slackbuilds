@@ -2,10 +2,6 @@
 
 This Python script monitors a specified directory for files with particular extensions. When these files become "stable" (i.e., their size hasn't changed for a configurable period), the script backs them up to a designated destination directory. It intelligently avoids duplicating backups of unchanged files by checking MD5 hashes against a local SQLite database of previously backed-up files.
 
-# What motivated me to do this?
-
-I reinstall Slackware  pretty freqently, and having to re-build some of the things I _always_ install on my desktop, laptop or whatever is a pain, especially for older hardware. (IE: my aging Lenovo laptop takes approximately 2 hours to build nodejs). I often forget to grab whatever slackbuilds are in `/tmp` so that I can just reinstall them later. This file (and an NFS share it backs up to) makes sure I don't have to recompile every slackbuild I've run since the last time I did the reinstall thing.
-
 ## Features
 
 * **Directory Monitoring:** Actively watches a user-defined directory.
@@ -31,22 +27,10 @@ I reinstall Slackware  pretty freqently, and having to re-build some of the thin
     * `hashlib`
     * `time`
     * `dataclasses`
-
-## File Structure
-
-The script is organized into the following files:
-
-* **`main.py`**: The entry point of the application. It handles command-line arguments, initializes the configuration, and starts the file monitor.
-* **`config.py`**: Manages loading the configuration settings. It can prompt the user for input or use predefined defaults. Defines the `Config` dataclass structure.
-* **`file_monitor.py`**: Contains the `CachedFileMonitor` class, which is the core of the script. It handles file scanning, stability checks, MD5 computation, and the backup process.
-* **`backup_db.py`**: Manages the SQLite database (`backup_state.sqlite`). This includes creating the schema, recording backed-up files, and checking if a file has already been backed up.
-
+    * Optional: if you want to run this interactively you'll need questionary `pip install questionary`
 ## Configuration
-
-The script can be configured in two ways:
-
 1.  **Interactive Mode:**
-    Simply run `python main.py`. The script will prompt you for:
+    Simply run `python3 main.py`. The script will prompt you for:
     * **Path to be monitored?**: The directory you want to watch for files.
     * **Base Backup Directory?**: The main directory where your backups will be stored.
     * **Destination Directory?**: The name of the subdirectory (inside the Base Backup Directory) where files from this specific monitored path will be saved.
@@ -54,43 +38,27 @@ The script can be configured in two ways:
     * **Monitor time (in minutes)?**: How often to scan the monitored directory.
     * **Stable Time (in minutes)?**: How long a file's size must remain unchanged before it's considered stable and ready for backup.
 
-2.  **Non-Interactive Mode (using defaults):**
-    Run the script with the `--no-input` or `--auto` flag:
-    `python main.py --no-input`
-    or
-    `python main.py --auto`
-
-    This will use the default values defined in `config.py`:
-    * **Monitor Directory**: `/tmp`
-    * **Base Backup Directory**: Your user's home directory (e.g., `/home/user`)
-    * **Destination Subdirectory Name**: `SavedCachedFiles`
-    * **File Extensions**: `.tgz,.tbz,.tlz,.txz`
-    * **Monitor Interval**: 5 minutes
-    * **Stable Time**: 2 minutes
-
 ### Backup State Database
 
-The script creates and uses a file named `backup_state.sqlite` in the same directory where the script is run. This SQLite database stores the relative paths and MD5 hashes of files that have already been backed up, preventing redundant copies.
+The script creates and uses a file named `backup_state.sqlite` in the same directory where the backups are stored. This SQLite database stores the relative paths and MD5 hashes of files that have already been backed up, preventing redundant copies.
 
 ## Usage
 
-1.  Ensure you have Python 3 installed.
-2.  Place the script files (`main.py`, `config.py`, `file_monitor.py`, `backup_db.py`) in the same directory.
-3.  Open your terminal or command prompt and navigate to that directory.
-4.  **To run with interactive configuration:**
-    ```bash
-    python main.py
-    ```
-5.  **To run with default/automated configuration:**
-    ```bash
-    python main.py --no-input
-    ```
-    or
-    ```bash
-    python main.py --auto
-    ```
-6.  The script will start monitoring and logging its actions to the console.
-7.  To stop the script, press `Ctrl+C`. The script will attempt to save the current backup state to disk before exiting.
+There are three sample files in this directory `rc.cached_file_monitor.sample`, `config.ini.sample` and, `file_type_presets.conf.sample` : Adjust these three files to match your local desired setup and save them without the `.sample` extension.
+rc.cached_file_monitor will need to be placed in /etc/rc.d to run automatically when your system starts. Additionally, you'll want to add these lines to your /etc/rc.local:
+        ```
+        if [ -x /etc/rc.d/rc.cached_file_monitor ]; then
+            /etc/rc.d/rc.cached_file_monitor start
+        fi
+        ```
+You can also add
+        ```
+        if [ -x /etc/rc.d/rc.cached_file_monitor ]; then
+            /etc/rc.d/rc.cached_file_monitor stop
+        fi
+        ```
+
+To your rc.local_shutdown to make sure the database gets saved before a shutdown/restart event.
 
 ## How It Works
 
@@ -108,24 +76,6 @@ The script creates and uses a file named `backup_state.sqlite` in the same direc
     * Information about the newly backed-up file (path, MD5 hash, timestamp) is recorded in the database.
 5.  **Database Persistence**: The `backup_state.sqlite` database is saved to disk from its in-memory version when the script shuts down gracefully (e.g., via `Ctrl+C`) or periodically during operation if such functionality were added to `save_to_disk` calls within the main loop (currently it's on shutdown).
 
-6. **Optional** : There is an rc.cached_file_monitor file in this repo. If you want this to run in the background:
-    * Put `main.py` `backup_db.py` `config.py` and `file_monitor.py` in `/opt/cached_file_monitor/` 
-    * Move the rc.cached_file_monitor to `/etc/rc.d` and make the file exectuable. 
-    * Add these lines to `/etc/rc.local` :
-        ```
-        if [ -x /etc/rc.d/rc.cached_file_monitor ]; then
-            /etc/rc.d/rc.cached_file_monitor start
-        fi
-        ```
-
-        You can also add
-        ```
-        if [ -x /etc/rc.d/rc.cached_file_monitor ]; then
-            /etc/rc.d/rc.cached_file_monitor stop
-        fi
-        ```
-
-        To your rc.local_shutdown to make sure the database gets saved before a shutdown/restart event.
 ## Logging
 
 The script provides logging output to the console, indicating its current operations, such as:
@@ -141,5 +91,5 @@ Log messages are formatted as: `YYYY-MM-DD HH:MM:SS - LEVELNAME - Message`.
 ## Future Considerations / To-Do
 
 * More advanced error handling and recovery.
-* Configuration via a separate config file (e.g., INI, YAML, JSON) instead of only prompts/defaults.
+* ~~Configuration via a separate config file (e.g., INI, YAML, JSON) instead of only prompts/defaults.~~
 * Option for one-time run (scan and backup once, then exit) vs. continuous monitoring.

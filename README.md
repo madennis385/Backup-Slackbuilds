@@ -78,7 +78,7 @@ To your rc.local_shutdown to make sure the database gets saved before a shutdown
 
 ## Logging
 
-The script provides logging output to the console, indicating its current operations, such as:
+The script provides logging output to /var/log/cached_file_monitor.log, indicating its current operations, such as:
 * Initialization parameters.
 * Files being detected and monitored.
 * Changes in file sizes.

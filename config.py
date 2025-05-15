@@ -1,4 +1,3 @@
-
 # config.py
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,6 +5,8 @@ from typing import List, Dict, Optional
 import configparser # For INI file handling
 import os # For expanding user paths like ~
 import logging
+import sys # For sys.exit in case of critical errors
+
 try:
     import questionary
 except ImportError:
@@ -42,12 +43,12 @@ class Config:
 FILE_TYPE_CATEGORIES: Dict[str, List[str]] = {}
 
 def save_categories_to_file(filepath: Path, categories: Dict[str, List[str]]):
-    # ... (This function remains the same as in your original config.py)
     try:
         with filepath.open("w", encoding="utf-8") as f:
             f.write("# File Type Categories Configuration\n")
             f.write("# Format: Category Name,.ext1,.ext2,...\n")
-            # ... (rest of the save logic) ...
+            f.write("# Lines starting with # are comments.\n")
+            f.write("# Example: My Custom Files,.dat,.bak\n")
             for name, exts in categories.items():
                 f.write(f"{name},{','.join(exts)}\n")
         logging.info(f"Created/Updated file type categories configuration at: {filepath}")
@@ -56,15 +57,18 @@ def save_categories_to_file(filepath: Path, categories: Dict[str, List[str]]):
 
 
 def load_file_type_categories_from_file(filepath: Path) -> Dict[str, List[str]]:
-    # ... (This function remains largely the same as in your original config.py)
-    # ... (It should use logging instead of print for consistency if possible)
-    global FILE_TYPE_CATEGORIES # Ensure it updates the global var
+    global FILE_TYPE_CATEGORIES
     loaded_categories: Dict[str, List[str]] = {}
+    created_default = False
     if not filepath.exists():
-        logging.info(f"Categories file not found at {filepath}. Will attempt to create with defaults if interactive, or use hardcoded defaults.")
-        save_categories_to_file(filepath, DEFAULT_FILE_TYPE_CATEGORIES) # Create it if missing
+        logging.info(f"Categories file not found at {filepath}. Creating it with default categories.")
+        logging.info(f"You can edit this file ({filepath}) later to customize categories and extensions.")
+        save_categories_to_file(filepath, DEFAULT_FILE_TYPE_CATEGORIES)
+        created_default = True
+        # After creating, load them as if they were there.
+        loaded_categories = DEFAULT_FILE_TYPE_CATEGORIES.copy()
 
-    if filepath.exists():
+    if filepath.exists() and not created_default: # Only read if not just created with defaults
         try:
             with filepath.open("r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
@@ -85,139 +89,297 @@ def load_file_type_categories_from_file(filepath: Path) -> Dict[str, List[str]]:
                         logging.warning(f"No valid extensions for category '{category_name}' on line {line_num} in {filepath}: '{line}'. Skipping.")
                         continue
                     if category_name in loaded_categories:
-                         logging.warning(f"Duplicate category name '{category_name}' on line {line_num} in {filepath}. Overwriting.")
+                         logging.warning(f"Duplicate category name '{category_name}' on line {line_num} in {filepath}. Overwriting with later definition.")
                     loaded_categories[category_name] = extensions
             if not loaded_categories:
-                 logging.warning(f"No valid categories loaded from {filepath}. Check format.")
+                 logging.warning(f"No valid categories loaded from {filepath}. Check its format. Default categories will be used if selection fails.")
         except IOError as e:
             logging.error(f"Could not read categories file {filepath}: {e}")
         except Exception as e:
             logging.error(f"Unexpected error parsing categories file {filepath}: {e}")
 
+    # If, after all attempts, loaded_categories is empty, it means even the default creation/loading failed
+    # or the file was empty/malformed. In a strict setup, we might not want to fallback.
+    # However, for usability, ensuring *some* categories are available for the interactive part is good.
     if not loaded_categories:
-        logging.info(f"Using hardcoded default file type categories as a fallback.")
+        logging.warning(f"No categories loaded from {filepath}. Using internal default categories for selection.")
         FILE_TYPE_CATEGORIES = DEFAULT_FILE_TYPE_CATEGORIES.copy()
-        return FILE_TYPE_CATEGORIES
+        return FILE_TYPE_CATEGORIES # Return a copy of the hardcoded defaults
 
     FILE_TYPE_CATEGORIES = loaded_categories
     return loaded_categories
 
 
-def get_extensions_interactively(current_default_extensions: List[str]) -> List[str]:
-    # ... (This function remains largely the same as in your original config.py)
-    # ... (It should use the global FILE_TYPE_CATEGORIES loaded by load_file_type_categories_from_file)
+def get_extensions_interactively(current_config_extensions: Optional[List[str]] = None) -> List[str]:
+    """
+    Interactively gets file extensions from the user.
+    Uses global FILE_TYPE_CATEGORIES.
+    current_config_extensions is used to pre-check categories if questionary is available.
+    """
     global FILE_TYPE_CATEGORIES
-    if not questionary:
-        logging.warning("'questionary' library not found. Falling back to manual text input for file extensions.")
-        default_extensions_str = ",".join(current_default_extensions)
-        user_input_str = input(f"File extensions to watch for (comma-separated) [{default_extensions_str}]: ")
-        user_input_str = user_input_str or default_extensions_str
-        return [ext.strip() for ext in user_input_str.split(",") if ext.strip().startswith(".")]
-
-    selected_extensions = set()
-    # ... (rest of the interactive logic using questionary and FILE_TYPE_CATEGORIES)
-    # Example snippet (you'll need to adapt your full logic here):
+    
+    # Ensure FILE_TYPE_CATEGORIES is populated (it should be by the time this is called in setup)
     if not FILE_TYPE_CATEGORIES:
-        logging.warning("No file type categories available for interactive selection.")
-        # Fallback to simple input
-        default_extensions_str = ",".join(current_default_extensions)
-        user_input_str = input(f"File extensions (comma-separated) [{default_extensions_str}]: ")
-        user_input_str = user_input_str or default_extensions_str
-        return [ext.strip() for ext in user_input_str.split(",") if ext.strip().startswith(".")]
+        logging.error("CRITICAL: FILE_TYPE_CATEGORIES is not populated. This should not happen if categories file logic ran.")
+        # Attempt a last-ditch load, though this indicates a flow error
+        categories_path = CONFIG_SCRIPT_DIR / DEFAULT_CATEGORIES_FILENAME
+        load_file_type_categories_from_file(categories_path) # Tries to create if not exists
+        if not FILE_TYPE_CATEGORIES: # Still no categories
+            logging.error("Failed to load any file type categories. Cannot proceed with extension selection.")
+            # In a setup script, we must get some extensions.
+            # Forcing manual input if categories are totally borked.
+            if questionary: questionary = None # Force fallback
+
+    # Use current_config_extensions for pre-selection state if provided and questionary is active
+    default_selections_set = set(current_config_extensions or [])
+
+    if not questionary:
+        logging.warning("Questionary library not found. Falling back to manual text input for file extensions.")
+        while True:
+            user_input_str = input(
+                "Enter file extensions to watch, comma-separated (e.g., .tgz,.zip,.iso): "
+            ).strip()
+            if not user_input_str:
+                print("Input cannot be empty. Please provide at least one extension.")
+                continue
+            selected_extensions_list = [
+                ext.strip() for ext in user_input_str.split(",") if ext.strip().startswith(".") and len(ext.strip()) > 1
+            ]
+            if not selected_extensions_list:
+                print("No valid extensions entered. Ensure they start with '.' and are not empty (e.g., .txt).")
+                continue
+            return sorted(list(set(selected_extensions_list)))
+
+    selected_extensions_set = set()
+    
+    if not FILE_TYPE_CATEGORIES: # Should have been caught above, but double check
+        logging.warning("No file type categories available for interactive selection. Prompting for manual input.")
+        # This will effectively fall through to the "add custom extensions" part.
+        pass # Continue to custom input
 
     choices = []
-    # Convert current_default_extensions to a set for easier checking
-    default_set = set(current_default_extensions)
+    if FILE_TYPE_CATEGORIES:
+        for category_name, extensions_in_category in FILE_TYPE_CATEGORIES.items():
+            # Check if all extensions in this category are part of the current/default set for pre-checking
+            is_category_pre_checked = default_selections_set.issuperset(set(extensions_in_category))
+            
+            display_text = f"{category_name} ({', '.join(extensions_in_category)})"
+            choices.append(questionary.Choice(
+                title=display_text, 
+                value=category_name, # Store category name as value
+                checked=is_category_pre_checked 
+            ))
 
-    for category_name, extensions_in_category in FILE_TYPE_CATEGORIES.items():
-        # Check if all extensions in this category are part of the default set
-        is_default_category_checked = default_set.issuperset(set(extensions_in_category))
-        display_text = f"{category_name} ({', '.join(extensions_in_category)})"
-        choices.append(questionary.Choice(title=display_text, value=category_name, checked=is_default_category_checked))
+    if choices:
+        logging.info("Select file type categories. Use Spacebar to select/deselect, Enter to confirm.")
+        selected_categories = questionary.checkbox(
+            "Which categories of files do you want to monitor?",
+            choices=choices
+        ).ask()
 
-    # ... (the rest of your questionary logic for checkboxes, custom input etc.)
-    # For brevity, I'm not reproducing the entire questionary flow.
-    # Ensure it returns a list of selected extension strings.
-    # This is a placeholder for your detailed interactive extension selection.
-    logging.info("Interactive extension selection placeholder. Implement full logic or fallback.")
-    selected_categories = questionary.checkbox("Select categories:", choices=choices).ask()
-    if selected_categories:
+        if selected_categories is None: # User cancelled
+            logging.warning("Category selection cancelled.")
+            # Depending on flow, either exit or return empty/previous
+            raise EOFError("User cancelled category selection.")
+
+
         for cat_name in selected_categories:
-            selected_extensions.update(FILE_TYPE_CATEGORIES[cat_name])
-    # Add custom extension logic too
-    if not selected_extensions:
-        return current_default_extensions # Fallback if nothing selected
-    return sorted(list(selected_extensions))
+            selected_extensions_set.update(FILE_TYPE_CATEGORIES.get(cat_name, []))
 
-
-def _get_path_from_input(prompt: str, default_path: str, is_dir: bool = True) -> Path:
+    # Always offer to add custom extensions
+    logging.info("You can also add custom file extensions.")
     while True:
-        user_input_str = input(f"{prompt} [{default_path}]: ").strip()
-        path_str = user_input_str or default_path
-        resolved_path = Path(os.path.expanduser(path_str)).resolve()
-        if is_dir:
-            if resolved_path.is_dir():
-                return resolved_path
-            else:
-                logging.error(f"Path '{resolved_path}' is not a valid directory or does not exist. Please try again.")
-        else: # is_file or generic path
-            # For categories file, it might not exist yet if we're creating it.
-            # So we might just accept the path and let file creation handle it.
-            return resolved_path # Or add specific checks like .parent.exists()
+        custom_extensions_str = questionary.text(
+            "Add any other comma-separated extensions? (e.g., .dat,.log) (Leave blank to skip):",
+            default="" # No default here
+        ).ask()
+
+        if custom_extensions_str is None: # User cancelled
+             raise EOFError("User cancelled custom extension input.")
+        
+        custom_extensions_str = custom_extensions_str.strip()
+        if not custom_extensions_str:
+            break # User is done adding custom extensions
+
+        custom_list = [
+            ext.strip() for ext in custom_extensions_str.split(',') 
+            if ext.strip().startswith(".") and len(ext.strip()) > 1
+        ]
+        
+        if not custom_list and custom_extensions_str: # User typed something, but it was invalid
+            logging.warning("Invalid format for custom extensions. Ensure they start with '.' (e.g., .log). Please try again or leave blank.")
+            # Loop back to ask for custom extensions again
+        else:
+            selected_extensions_set.update(custom_list)
+            break # Valid input or empty input, proceed
+
+    if not selected_extensions_set:
+        logging.warning("No file extensions were selected. This is usually not intended.")
+        if questionary.confirm("No extensions selected. Do you want to try again?", default=True).ask():
+            return get_extensions_interactively(current_config_extensions) # Recurse
+        else:
+            logging.error("Proceeding without any file extensions. The application may not monitor any files.")
+            return [] # Or raise an error: raise ValueError("At least one file extension must be configured.")
+
+    return sorted(list(selected_extensions_set))
+
+
+def _get_path_from_input(prompt_message: str, example_hint: str, is_dir: bool = True, ensure_exists: bool = True) -> Path:
+    """
+    Gets a path from user input.
+    - prompt_message: The main question to ask the user.
+    - example_hint: An example of a valid input (e.g., "/mnt/data/files_to_watch").
+    - is_dir: If True, validates that the path is an existing directory (if ensure_exists is True).
+    - ensure_exists: If True, the path must exist. If False, any valid path string is accepted.
+    """
+    if not questionary: # Fallback to basic input
+        while True:
+            user_input_str = input(f"{prompt_message} (e.g., {example_hint}): ").strip()
+            if not user_input_str:
+                print("Path cannot be empty. Please enter a valid path.")
+                continue
+            
+            try:
+                resolved_path = Path(os.path.expanduser(user_input_str)).resolve()
+            except Exception as e:
+                print(f"Error resolving path '{user_input_str}': {e}. Please enter a valid path format.")
+                continue
+
+            if ensure_exists:
+                if not resolved_path.exists():
+                    print(f"Path '{resolved_path}' does not exist. Please enter an existing path.")
+                    continue
+                if is_dir and not resolved_path.is_dir():
+                    print(f"Path '{resolved_path}' is not a directory. Please enter a directory path.")
+                    continue
+            return resolved_path
+    else: # Use questionary
+        while True:
+            user_input_str = questionary.path(
+                message=prompt_message,
+                default="", # No default value
+                validate=lambda text: True if text else "Path cannot be empty.",
+                only_directories=is_dir if ensure_exists else False # Only enforce if it must exist as dir
+            ).ask()
+
+            if user_input_str is None: # User cancelled
+                raise EOFError("User cancelled path input.")
+            if not user_input_str: # Should be caught by validate, but belt-and-suspenders
+                logging.warning("Path input was empty. Please try again.")
+                continue
+            
+            try:
+                resolved_path = Path(os.path.expanduser(user_input_str)).resolve()
+            except Exception as e: # Should be rare with questionary's path type
+                logging.error(f"Error resolving path '{user_input_str}': {e}. Please try again.")
+                continue
+
+            if ensure_exists:
+                if not resolved_path.exists():
+                    logging.warning(f"Path '{resolved_path}' does not exist. Please enter an existing path.")
+                    continue
+                if is_dir and not resolved_path.is_dir():
+                    logging.warning(f"Path '{resolved_path}' is not a directory. Please enter a directory path.")
+                    continue
+            
+            # For destination base directory, it might not exist yet, so we might allow creation.
+            # The ensure_exists flag handles this. If ensure_exists is False, we accept the path.
+            return resolved_path
+
 
 def get_config_interactively(current_config: Optional[Config] = None) -> Config:
-    """Gets configuration interactively, using current_config for defaults if provided."""
+    """
+    Gets configuration interactively.
+    `current_config` is IGNORED for providing defaults to prompts to meet the "no default configuration" requirement.
+    Hints are provided in the prompt text itself.
+    """
     global FILE_TYPE_CATEGORIES # Ensure we use the global categories
 
-    # --- Set up defaults for prompts ---
-    if current_config:
-        default_monitor_dir = str(current_config.monitor_dir)
-        default_dest_base_dir = str(current_config.dest_base_dir)
-        default_dest_subdir_name = current_config.dest_subdir_name
-        default_file_extensions = current_config.file_extensions # list
-        default_check_interval_min = str(current_config.check_interval // 60)
-        default_stable_threshold_min = str(current_config.stable_threshold // 60)
-        default_categories_path_str = str(current_config.categories_file_path)
-    else: # Absolute defaults if no current config
-        default_monitor_dir = "/tmp"
-        default_dest_base_dir = "/opt/stor0"
-        default_dest_subdir_name = "SavedCachedFiles"
-        default_file_extensions = DEFAULT_FILE_TYPE_CATEGORIES.get("Slackware Packages", [".tgz",".tbz",".tlz",".txz"])
-        default_check_interval_min = "5"
-        default_stable_threshold_min = "2"
-        default_categories_path_str = str(CONFIG_SCRIPT_DIR / DEFAULT_CATEGORIES_FILENAME)
-
     # --- Interactive Prompts ---
-    monitor_dir = _get_path_from_input("Path to be monitored?", default_monitor_dir, is_dir=True)
-    dest_base_dir = _get_path_from_input("Base Backup Directory?", default_dest_base_dir, is_dir=True)
-    dest_subdir_name = input(f"Destination Subdirectory Name? [{default_dest_subdir_name}]: ").strip() or default_dest_subdir_name
+    # For paths that MUST exist (like monitor_dir)
+    monitor_dir = _get_path_from_input(
+        prompt_message="Enter the full path to the directory to be monitored",
+        example_hint="/var/log/my_app_logs or /home/user/downloads",
+        is_dir=True,
+        ensure_exists=True
+    )
+    # For paths that can be created (like dest_base_dir)
+    dest_base_dir = _get_path_from_input(
+        prompt_message="Enter the full path to the base directory where backups will be stored",
+        example_hint="/mnt/backup_drive/my_cached_files or /opt/backups",
+        is_dir=True,
+        ensure_exists=False # Allow creating this directory
+    )
+    
+    dest_subdir_name_prompt = "Enter a name for the subdirectory within the base backup directory (e.g., 'daily_cache')"
+    if questionary:
+        dest_subdir_name = questionary.text(
+            dest_subdir_name_prompt,
+            validate=lambda text: True if text.strip() else "Subdirectory name cannot be empty."
+        ).ask()
+        if dest_subdir_name is None: raise EOFError("User cancelled input.")
+        dest_subdir_name = dest_subdir_name.strip()
+    else:
+        while True:
+            dest_subdir_name = input(f"{dest_subdir_name_prompt}: ").strip()
+            if dest_subdir_name: break
+            print("Subdirectory name cannot be empty.")
 
-    # Categories file path
-    categories_file_input_str = input(f"Path to file type categories configuration? [{default_categories_path_str}]: ").strip()
-    categories_file_path_interactive = Path(os.path.expanduser(categories_file_input_str or default_categories_path_str)).resolve()
 
-    # (Re)Load categories based on potentially new path before prompting for extensions
+    # Categories file path - this file can be created if it doesn't exist.
+    default_categories_path_suggestion = str(CONFIG_SCRIPT_DIR / DEFAULT_CATEGORIES_FILENAME)
+    categories_file_path_interactive = _get_path_from_input(
+        prompt_message=f"Enter path for file type categories configuration (press Enter for default: {default_categories_path_suggestion})",
+        example_hint=default_categories_path_suggestion + " or /etc/myapp/file_types.conf",
+        is_dir=False, # It's a file
+        ensure_exists=False # It can be created
+    )
+    # If user just pressed Enter for the default suggestion with _get_path_from_input's non-questionary fallback:
+    if not str(categories_file_path_interactive) or str(categories_file_path_interactive) == ".": # check if input was empty for path
+         categories_file_path_interactive = Path(default_categories_path_suggestion).resolve()
+
+
+    # (Re)Load categories based on the potentially new path before prompting for extensions.
+    # This also creates the categories file with defaults if it doesn't exist.
     FILE_TYPE_CATEGORIES = load_file_type_categories_from_file(categories_file_path_interactive)
 
     logging.info("\n--- Configure File Extensions ---")
-    file_extensions_list = get_extensions_interactively(default_file_extensions) # Pass current defaults
+    # Pass extensions from current_config if we wanted to pre-select, but requirement is no defaults.
+    # If current_config was from an INI being reconfigured, pass its extensions.
+    # For a fresh setup (current_config=None), pass None.
+    extensions_from_old_config = current_config.file_extensions if current_config else None
+    file_extensions_list = get_extensions_interactively(current_config_extensions=extensions_from_old_config)
+    logging.info(f"Selected extensions: {', '.join(file_extensions_list)}")
     logging.info("--- End of File Extension Configuration ---\n")
 
-    if not file_extensions_list: # Ensure we have some extensions
-        logging.warning(f"No valid file extensions configured. Using default: {','.join(default_file_extensions)}")
-        file_extensions_list = default_file_extensions
+    if not file_extensions_list: # Should be handled by get_extensions_interactively, but as a fallback
+        logging.error("No file extensions configured. This is mandatory for the application to function.")
+        raise ValueError("Configuration failed: At least one file extension must be specified.")
 
-    while True:
-        check_interval_min_str = input(f"Monitor time (in minutes)? [{default_check_interval_min}]: ").strip() or default_check_interval_min
-        if check_interval_min_str.isdigit() and int(check_interval_min_str) > 0:
-            break
-        logging.error("Invalid input. Monitor time must be a positive integer.")
-
-    while True:
-        stable_threshold_min_str = input(f"File stable after how many minutes? [{default_stable_threshold_min}]: ").strip() or default_stable_threshold_min
-        if stable_threshold_min_str.isdigit() and int(stable_threshold_min_str) >= 0:
-            break
-        logging.error("Invalid input. Stable threshold must be a non-negative integer.")
+    time_prompt_hint = " (e.g., 5 for 5 minutes)"
+    if questionary:
+        check_interval_min_str = questionary.text(
+            "Monitoring check interval (in minutes)?" + time_prompt_hint,
+            validate=lambda val: (val.isdigit() and int(val) > 0) or "Must be a positive integer."
+        ).ask()
+        if check_interval_min_str is None: raise EOFError("User cancelled input.")
+        
+        stable_threshold_min_str = questionary.text(
+            "How long should a file remain unchanged to be considered 'stable' (in minutes)?" + time_prompt_hint,
+            validate=lambda val: (val.isdigit() and int(val) >= 0) or "Must be a non-negative integer."
+        ).ask()
+        if stable_threshold_min_str is None: raise EOFError("User cancelled input.")
+    else:
+        while True:
+            check_interval_min_str = input(f"Monitoring check interval (in minutes)?{time_prompt_hint}: ").strip()
+            if check_interval_min_str.isdigit() and int(check_interval_min_str) > 0:
+                break
+            print("Invalid input. Monitor time must be a positive integer.")
+        while True:
+            stable_threshold_min_str = input(f"File stable after how many minutes?{time_prompt_hint}: ").strip()
+            if stable_threshold_min_str.isdigit() and int(stable_threshold_min_str) >= 0:
+                break
+            print("Invalid input. Stable threshold must be a non-negative integer.")
 
     return Config(
         monitor_dir=monitor_dir,
@@ -232,47 +394,63 @@ def get_config_interactively(current_config: Optional[Config] = None) -> Config:
 def load_config_from_ini(ini_path: Path) -> Optional[Config]:
     parser = configparser.ConfigParser()
     if not ini_path.exists():
-        logging.info(f"Configuration file {ini_path} not found.")
+        # This is not an error in the context of `setup.py` checking, 
+        # but `main.py` will treat it as a reason to halt.
+        logging.debug(f"Configuration file {ini_path} not found.")
         return None
 
     try:
         parser.read(ini_path)
+        
+        # Helper to get mandatory values from INI
+        def get_mandatory_ini_value(section, key):
+            if not parser.has_option(section, key) or not parser.get(section,key).strip():
+                logging.error(f"CRITICAL: Missing mandatory key '{key}' in section '[{section}]' of {ini_path}.")
+                logging.error("Please run 'python setup.py' to reconfigure or manually edit the INI file.")
+                raise ValueError(f"Missing mandatory key '{key}' in INI file.")
+            return parser.get(section, key)
 
         # Paths section
-        monitor_dir_str = parser.get('Paths', 'monitor_dir', fallback='/tmp')
+        monitor_dir_str = get_mandatory_ini_value('Paths', 'monitor_dir')
         monitor_dir = Path(os.path.expanduser(monitor_dir_str)).resolve()
         if not monitor_dir.is_dir():
-            logging.error(f"INI Error: monitor_dir '{monitor_dir}' is not a valid directory. Using fallback.")
-            monitor_dir = Path("/tmp").resolve() # Fallback if invalid
+            logging.error(f"INI Error: monitor_dir '{monitor_dir}' from {ini_path} is not a valid directory.")
+            logging.error("Please run 'python setup.py' to reconfigure.")
+            raise ValueError(f"Invalid monitor_dir '{monitor_dir}' in INI file.")
 
-        dest_base_dir_str = parser.get('Paths', 'dest_base_dir', fallback=str("/opt/stor0"))
+        dest_base_dir_str = get_mandatory_ini_value('Paths', 'dest_base_dir')
         dest_base_dir = Path(os.path.expanduser(dest_base_dir_str)).resolve()
-        if not dest_base_dir.is_dir():
-            logging.error(f"INI Error: dest_base_dir '{dest_base_dir}' is not a valid directory. Using fallback.")
-            dest_base_dir = Path("/opt/stor0").resolve() # Fallback
-            dest_base_dir.mkdir(parents=True, exist_ok=True) # Attempt to create fallback
+        # We don't check if dest_base_dir.is_dir() here, as main.py will attempt to create it.
 
-        dest_subdir_name = parser.get('Paths', 'dest_subdir_name', fallback='SavedCachedFiles')
+        dest_subdir_name = get_mandatory_ini_value('Paths', 'dest_subdir_name')
 
         # Settings section
-        extensions_str = parser.get('Settings', 'file_extensions', fallback='.tgz,.tbz,.tlz,.txz')
-        file_extensions = [ext.strip() for ext in extensions_str.split(',') if ext.strip().startswith('.')]
-        if not file_extensions: # Ensure fallback if parsing results in empty list
-            logging.warning(f"No valid file extensions in INI. Using default Slackware packages.")
-            file_extensions = DEFAULT_FILE_TYPE_CATEGORIES.get("Slackware Packages", [".tgz",".tbz",".tlz",".txz"])
+        extensions_str = get_mandatory_ini_value('Settings', 'file_extensions')
+        file_extensions = [ext.strip() for ext in extensions_str.split(',') if ext.strip().startswith('.') and len(ext.strip()) > 1]
+        if not file_extensions:
+            logging.error(f"INI Error: No valid 'file_extensions' found in {ini_path}.")
+            logging.error("Please run 'python setup.py' to reconfigure.")
+            raise ValueError("No valid file_extensions in INI file.")
 
-        check_interval_minutes = parser.getint('Settings', 'check_interval_minutes', fallback=5)
-        stable_threshold_minutes = parser.getint('Settings', 'stable_threshold_minutes', fallback=2)
-        if check_interval_minutes <= 0: check_interval_minutes = 5
-        if stable_threshold_minutes < 0: stable_threshold_minutes = 2
+        check_interval_minutes_str = get_mandatory_ini_value('Settings', 'check_interval_minutes')
+        stable_threshold_minutes_str = get_mandatory_ini_value('Settings', 'stable_threshold_minutes')
+
+        if not (check_interval_minutes_str.isdigit() and int(check_interval_minutes_str) > 0):
+            raise ValueError("check_interval_minutes must be a positive integer in INI.")
+        if not (stable_threshold_minutes_str.isdigit() and int(stable_threshold_minutes_str) >= 0):
+            raise ValueError("stable_threshold_minutes must be a non-negative integer in INI.")
+        
+        check_interval_minutes = int(check_interval_minutes_str)
+        stable_threshold_minutes = int(stable_threshold_minutes_str)
 
         # Presets section for categories_file
-        raw_categories_file = parser.get('Presets', 'categories_file', fallback=DEFAULT_CATEGORIES_FILENAME)
+        raw_categories_file = get_mandatory_ini_value('Presets', 'categories_file')
         categories_file_p = Path(raw_categories_file)
         if not categories_file_p.is_absolute():
             categories_file_path = (CONFIG_SCRIPT_DIR / categories_file_p).resolve()
         else:
             categories_file_path = categories_file_p.resolve()
+        # We don't check categories_file_path.exists() here, as load_file_type_categories_from_file will handle it (create if missing)
 
         return Config(
             monitor_dir=monitor_dir,
@@ -283,9 +461,14 @@ def load_config_from_ini(ini_path: Path) -> Optional[Config]:
             stable_threshold=stable_threshold_minutes * 60,
             categories_file_path=categories_file_path
         )
+    except ValueError as ve: # Catch specific ValueErrors from get_mandatory_ini_value or type conversions
+        logging.error(f"Configuration error in {ini_path}: {ve}")
+        # In a real application, you might want to exit or raise a more specific exception.
+        # For now, returning None will trigger the "run setup.py" path in main.
+        return None
     except Exception as e:
         logging.error(f"Error parsing configuration from {ini_path}: {e}", exc_info=True)
-        return None
+        return None # Indicates an error in loading, main.py will handle this.
 
 def save_config_to_ini(config: Config, ini_path: Path):
     parser = configparser.ConfigParser()
@@ -300,98 +483,69 @@ def save_config_to_ini(config: Config, ini_path: Path):
         'stable_threshold_minutes': str(config.stable_threshold // 60)
     }
 
-    # Store relative path for categories_file if it's within CONFIG_SCRIPT_DIR, else absolute
     try:
         relative_categories_path = config.categories_file_path.relative_to(CONFIG_SCRIPT_DIR)
         parser['Presets'] = {'categories_file': str(relative_categories_path)}
-    except ValueError: # Not relative (e.g. different drive or not a subpath), store absolute
+    except ValueError: 
         parser['Presets'] = {'categories_file': str(config.categories_file_path)}
 
     try:
+        ini_path.parent.mkdir(parents=True, exist_ok=True) # Ensure directory exists
         with ini_path.open('w', encoding='utf-8') as configfile:
             parser.write(configfile)
         logging.info(f"Configuration saved to {ini_path}")
     except IOError as e:
         logging.error(f"Could not save configuration to {ini_path}: {e}")
 
-def get_config(auto: bool = False, config_ini_path: Path = DEFAULT_CONFIG_INI_PATH) -> Config:
+def get_config(config_ini_path: Path = DEFAULT_CONFIG_INI_PATH) -> Config:
     """
-    Main function to get configuration.
-    Prioritizes INI file, then interactive, then defaults for auto mode.
-    Ensures FILE_TYPE_CATEGORIES is loaded based on the determined categories_file_path.
+    Main function to get configuration FOR THE RUNNING APPLICATION.
+    It now *requires* a valid INI file. If not found or invalid, it will
+    effectively lead to main.py exiting with instructions to run setup.py.
     """
-    global FILE_TYPE_CATEGORIES # Allow modification of the global
+    global FILE_TYPE_CATEGORIES
 
-    loaded_config_from_ini = load_config_from_ini(config_ini_path)
-    final_config: Optional[Config] = None
+    # The --auto flag is no longer used by get_config directly for choosing behavior.
+    # main.py decides if config exists. If it does, get_config loads it.
+    
+    final_config = load_config_from_ini(config_ini_path)
 
-    if loaded_config_from_ini:
-        if auto:
-            logging.info(f"Using configuration from {config_ini_path}")
-            final_config = loaded_config_from_ini
-        else: # Interactive mode, but INI exists
-            if questionary and questionary.confirm(f"Configuration found in {config_ini_path}. Use these settings?", default=True).ask():
-                final_config = loaded_config_from_ini
-            else:
-                logging.info("Overriding INI configuration with interactive setup.")
-                # Pass INI config as defaults for interactive session
-                final_config = get_config_interactively(current_config=loaded_config_from_ini)
-                if questionary and questionary.confirm(f"Save this new configuration to {config_ini_path}?", default=True).ask():
-                    save_config_to_ini(final_config, config_ini_path)
-    else: # No INI found or error loading it
-        if auto:
-            logging.info("No valid INI found, and --auto specified. Using hardcoded defaults.")
-            default_cat_path = CONFIG_SCRIPT_DIR / DEFAULT_CATEGORIES_FILENAME
-            final_config = Config(
-                monitor_dir=Path("/tmp").resolve(),
-                dest_base_dir=Path("/opt/stor0/").resolve(),
-                dest_subdir_name="SavedCachedFiles",
-                file_extensions=DEFAULT_FILE_TYPE_CATEGORIES.get("Slackware Packages", [".tgz",".tbz",".tlz",".txz"]),
-                check_interval=5 * 60,
-                stable_threshold=2 * 60,
-                categories_file_path=default_cat_path
-            )
-            # Ensure default dest_base_dir exists if using hardcoded defaults in auto mode
-            final_config.dest_base_dir.mkdir(parents=True, exist_ok=True)
-        else: # Interactive setup because no INI or user chose not to use it
-            logging.info(f"Starting interactive configuration (config.ini not found or error loading).")
-            final_config = get_config_interactively(current_config=None) # No base from INI
-            if questionary and questionary.confirm(f"Save this new configuration to {config_ini_path}?", default=True).ask():
-                save_config_to_ini(final_config, config_ini_path)
-
-    # After final_config is determined, load its specified categories file
-    # This ensures FILE_TYPE_CATEGORIES is correctly populated for the rest of the application
-    if final_config:
-        FILE_TYPE_CATEGORIES = load_file_type_categories_from_file(final_config.categories_file_path)
-    else:
-        # This case should ideally not be reached if get_config_interactively or defaults provide a config
-        logging.error("Failed to determine a valid configuration. Using emergency defaults for categories.")
-        emergency_cat_path = CONFIG_SCRIPT_DIR / DEFAULT_CATEGORIES_FILENAME
-        FILE_TYPE_CATEGORIES = load_file_type_categories_from_file(emergency_cat_path)
-        # And create an emergency config
-        final_config = Config(
-        monitor_dir=Path("/tmp").resolve(), dest_base_dir=Path("/opt/stor0").resolve(),
-        dest_subdir_name="EmergencySaved", file_extensions=[".tgz"],
-        check_interval=300, stable_threshold=120, categories_file_path=emergency_cat_path
-        )
-        final_config.dest_base_dir.mkdir(parents=True, exist_ok=True)
+    if not final_config:
+        # This case will be caught by main.py *before* calling get_config if ini_path doesn't exist.
+        # If load_config_from_ini returns None due to parsing errors, main.py also handles it.
+        # This block is more of a safeguard or for direct calls to get_config outside main.py's flow.
+        logging.critical(f"Configuration file {config_ini_path} is missing or invalid.")
+        logging.critical("Please run 'python setup.py' to create or repair the configuration.")
+        # In a library context, raising an exception might be better than sys.exit
+        # For this application, main.py handles the exit.
+        # If get_config is called elsewhere, it needs to handle this.
+        raise FileNotFoundError(f"Configuration missing or invalid. Run setup.py.")
 
 
-    # Ensure the Config object has the categories_file_path properly set before returning
-    # This should be handled by the Config object creation paths above.
+    # After final_config is determined (must be from INI), load its specified categories file.
+    # This also creates the categories file with defaults if it doesn't exist.
+    FILE_TYPE_CATEGORIES = load_file_type_categories_from_file(final_config.categories_file_path)
+    
+    # Ensure the loaded categories file is correctly reflected in the config if it was just created
+    # or if the path in the INI was relative and got resolved.
+    # The path in final_config should already be resolved by load_config_from_ini.
+
     return final_config
 
-# It's good practice to initialize logging for standalone testing of this module
+# Standalone testing of config.py (mainly for get_config_interactively via setup.py now)
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    print("This script (config.py) is not intended to be run directly for application configuration anymore.")
+    print("Please run 'python setup.py' for interactive configuration.")
+    print("Or run 'python main.py' if configuration is already complete.")
 
-    # Example of how to use:
-    # To test interactive mode (will prompt to save to config.ini):
-    # my_config = get_config(auto=False)
-    # logging.info(f"Final Config obtained: {my_config}")
-
-    # To test auto mode (will use config.ini if present, else defaults):
-    my_config_auto = get_config(auto=True)
-    logging.info(f"Final Auto Config obtained: {my_config_auto}")
-    logging.info(f"Loaded file type categories: {FILE_TYPE_CATEGORIES}")
-
+    # Test load_config_from_ini (assuming a config.ini might exist)
+    # print("\nAttempting to load config from DEFAULT_CONFIG_INI_PATH for testing...")
+    # test_conf = load_config_from_ini(DEFAULT_CONFIG_INI_PATH)
+    # if test_conf:
+    #     print(f"Successfully loaded test config: {test_conf}")
+    #     print(f"Categories file from test_conf: {test_conf.categories_file_path}")
+    #     cats = load_file_type_categories_from_file(test_conf.categories_file_path)
+    #     print(f"Loaded categories for test_conf: {cats}")
+    # else:
+    #     print("Could not load config from INI for testing (or it's invalid).")

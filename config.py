@@ -245,11 +245,11 @@ def load_config_from_ini(ini_path: Path) -> Optional[Config]:
             logging.error(f"INI Error: monitor_dir '{monitor_dir}' is not a valid directory. Using fallback.")
             monitor_dir = Path("/tmp").resolve() # Fallback if invalid
 
-        dest_base_dir_str = parser.get('Paths', 'dest_base_dir', fallback=str("/opt/stor0/SavedCachedFiles/"))
+        dest_base_dir_str = parser.get('Paths', 'dest_base_dir', fallback=str("/opt/stor0"))
         dest_base_dir = Path(os.path.expanduser(dest_base_dir_str)).resolve()
         if not dest_base_dir.is_dir():
             logging.error(f"INI Error: dest_base_dir '{dest_base_dir}' is not a valid directory. Using fallback.")
-            dest_base_dir = "/opt/stor0/SavedCachedFiles/".resolve() # Fallback
+            dest_base_dir = Path("/opt/stor0").resolve() # Fallback
             dest_base_dir.mkdir(parents=True, exist_ok=True) # Attempt to create fallback
 
         dest_subdir_name = parser.get('Paths', 'dest_subdir_name', fallback='SavedCachedFiles')
@@ -370,7 +370,7 @@ def get_config(auto: bool = False, config_ini_path: Path = DEFAULT_CONFIG_INI_PA
         FILE_TYPE_CATEGORIES = load_file_type_categories_from_file(emergency_cat_path)
         # And create an emergency config
         final_config = Config(
-        monitor_dir=Path("/tmp").resolve(), dest_base_dir="/opt/stor0/SavedCachedFiles/".resolve(),
+        monitor_dir=Path("/tmp").resolve(), dest_base_dir=Path("/opt/stor0").resolve(),
         dest_subdir_name="EmergencySaved", file_extensions=[".tgz"],
         check_interval=300, stable_threshold=120, categories_file_path=emergency_cat_path
         )

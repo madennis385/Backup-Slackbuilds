@@ -1,3 +1,6 @@
+# TODO:
+I need to re-write this document, the installation instructions are not current, at all.
+
 # Directory Monitor & Cached Backup Script
 
 This Python script monitors a specified directory for files with particular extensions. When these files become "stable" (i.e., their size hasn't changed for a configurable period), the script backs them up to a designated destination directory. It intelligently avoids duplicating backups of unchanged files by checking MD5 hashes against a local SQLite database of previously backed-up files.

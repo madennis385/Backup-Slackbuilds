@@ -10,7 +10,7 @@ APP_USER="nobody"                                 # User to run the application 
 APP_GROUP="nogroup"                               # Group for the application user (common for 'nobody', verify for your system, e.g., 'nobody' or 'nogroup')
 PYTHON_BIN="/usr/bin/python3"                     # Path to Python interpreter
 SCRIPT_PATH="/opt/cached_file_monitor/main.py"    # Path to your application's main script
-
+SCRIPT_HOMEDIR="/opt/cached_file_monitor"
 # --- File and Directory Paths ---
 APP_RUN_DIR="/var/run/${APP_NAME}"                # Directory for runtime files (e.g., PID file)
 PID_FILE="${APP_RUN_DIR}/${APP_NAME}.pid"         # Path to the PID file
@@ -31,6 +31,14 @@ if [ ! -d "$APP_RUN_DIR" ]; then
     fi
 fi
 
+if [ ! -d "$SCRIPT_HOMEDIR" ]; then
+    echo "Creating run directory: $SCRIPT_HOMEDIR"
+    mkdir -p "$SCRIPT_HOMEDIR"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to create run directory $SCRIPT_HOMEDIR. Exiting."
+        exit 1
+    fi
+fi
 # Set ownership and permissions for the run directory
 # This is done even if the directory already exists to ensure they are correct.
 chown "$APP_USER:$APP_GROUP" "$APP_RUN_DIR"
@@ -38,9 +46,19 @@ if [ $? -ne 0 ]; then
     echo "ERROR: Failed to set ownership on $APP_RUN_DIR for user $APP_USER and group $APP_GROUP. Exiting."
     exit 1
 fi
+chown "$APP_USER:$APP_GROUP" "$SCRIPT_HOMEDIR"
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set ownership on $SCRIPT_HOMEDIR for user $APP_USER and group $APP_GROUP. Exiting."
+    exit 1
+fi
 chmod 750 "$APP_RUN_DIR" # Permissions: rwxr-x--- (User: rwx, Group: rx, Other: ---)
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to set permissions (750) on $APP_RUN_DIR. Exiting."
+    exit 1
+fi
+chmod 750 "$SCRIPT_HOMEDIR" # Permissions: rwxr-x--- (User: rwx, Group: rx, Other: ---)
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to set permissions (750) on $SCRIPT_HOMEDIR. Exiting."
     exit 1
 fi
 
